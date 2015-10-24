@@ -327,8 +327,7 @@ class InitializedStream extends Stream {
 
 class ConstantSource extends InitializedStream {
   constructor(event) {
-    super(() => event)
-    this.ended = true
+    super(() => [event, DONE])
   }
 }
 
@@ -384,38 +383,36 @@ class Narly {
   }
 
   static never() {
-    let S = new Stream
-    S.execute(DONE)
-    return S
+    return new ConstantSource(null)
   }
 
-  static later(wait, value) {
+  static later(wait, value, type = VALUE) {
     return new CallbackSource(function() {
-      setTimeout(() => this.execute([new Event(VALUE, value), DONE]), wait)  
+      setTimeout(() => this.execute([new Event(type, value), DONE]), wait)  
     })
   }
 
-  static interval(interval, value) {
+  static interval(interval, value, type = VALUE) {
     return new CallbackSource(function() {
-      setInterval(() => this.execute(new Event(VALUE, value)), interval)
+      setInterval(() => this.execute(new Event(type, value)), interval)
     })
   }
 
-  static sequentially(interval, values) {
+  static sequentially(interval, values, type = VALUE) {
     var values = values.slice()
     return new CallbackSource(function() {
       let intv = setInterval(() => {
         if(!values.length) {
           clearInterval(intv)
           this.execute(DONE)
-        } else this.execute(new Event(VALUE, values.shift()))
+        } else this.execute(new Event(type, values.shift()))
       }, interval)      
     })
   }
 
-  static fromPoll(interval, fn) {
+  static fromPoll(interval, fn, type = VALUE) {
     return new CallbackSource(function() {
-      setInterval(() => this.execute(new Event(VALUE, fn())), interval)
+      setInterval(() => this.execute(new Event(type, fn())), interval)
     })
   }
 
