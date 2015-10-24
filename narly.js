@@ -31,8 +31,7 @@ class SideEffect {
   }
 
   execute(event) {
-    if(this.type === event.type
-      || (this.type instanceof Set && this.type.has(event.type)))
+    if(this.type === event.type)
       this.fn(event.value)
   }
 }
@@ -53,16 +52,12 @@ class Stream {
     this.ended = this.active = this.last = false
   }
 
-  activate(that, cached) {
-    if(cached && this.last instanceof Event)
-      that.execute(this.last, this)
-
+  activate(that) {
     if(!this.ended) {
       this.consumers.add(that)
       if(!this.active) {
         this.active = true
-        this.producers.forEach(p => p.activate(this,
-          this.last ? false : (this.last = cached)))
+        this.producers.forEach(p => p.activate(this,))
       }
     } else that.execute(DONE, this)
   }
@@ -104,13 +99,15 @@ class Stream {
 
   // Side effects
 
-  on(type, fn, cached = false) {
+  on(type, fn, emitLast) {
     let sideEffect = new SideEffect(type, fn),
         store = this.sideeffects.get(type)
 
     if(store.get(fn)) store.get(fn).add(sideEffect)
     else store.set(fn, new Set([sideEffect]))
-    this.activate(sideEffect, cached)
+
+    if(emitLast && this.last) sideEffect.execute(this.last)
+    this.activate(sideEffect)
 
     return this
   }
@@ -133,11 +130,11 @@ class Stream {
   static extend(producers, type, op) {
     let transform
     if(typeof type === 'number')
-      transform = (e, p) => e.type === type ? op(e, p) : e
+      transform = function(e, p) { e.type === type ? op(e, p) : e }
     else if(type instanceof Set)
-      transform = (e, p) => type.has(e.type) ? op(e, p) : e
+      transform = function(e, p) { type.has(e.type) ? op(e, p) : e }
     else
-      transform = (e, p) => op(e, p)
+      transform = function(e, p) { op(e, p) }
     return new Stream(transform, producers)
   }
 
@@ -184,24 +181,86 @@ class Stream {
   }
 
   diff(fn = (a, b) => [a, b], seed = undefined, type = VALUE) {
-    var prev = seed === undefined ? null : new Event(type, seed)
+    var prev = seed
     return Stream.extend([this], type, e => {
-      if(prev) return new Event(type, fn(prev.value, (prev = e).value))
-      else prev = e
+      if(prev !== undefined)
+        return new Event(e.type, fn(prev, prev = e.value))
+      else prev = e.value
     })
   }
 
-  scan(){}
-  flatten(){}
-  delay(){}
-  throttle(){}
-  debounce(){}
-  ignore(){}
-  before(){}
-  slidingWindow(){}
-  bufferWhile(){}
 
+  scan(fn, seed = undefined, type = VALUE) {
+    var prev = seed
+    return Stream.extend([this], type, e => {
+      if(prev !== undefined)
+        return new Event(e.type, prev = fn(prev, e.value))
+    })
+  }
 
+  flatten(fn = v => v, type = VALUE) {
+    return Stream.extend([this], type, e => {
+      return fn(e.value).map(v => new Event(e.type, v))
+    })
+  }
+
+  delay(wait, type = VALUE) {
+    return Stream.extend([this], type, function(e) {
+      setTimeout(() => { this.emit(e) }, wait)
+    })
+  }
+
+  throttle(wait, type = VALUE) {
+    var timeout, queue = []
+    return Stream.extend([this], type, e => {
+      queue.push(e)
+      if(!timeout) {
+        timeout = setTimeout(() => timeout = null, wait)
+        return queue
+      }
+    })
+  }
+
+  debounce(wait, type = VALUE) {
+    var timeout, queue = []
+    return Stream.extend([this], type, function(e) {
+      queue.push(e)
+      if(timeout) clearTimeout(timeout)
+      timeout = setTimeout(() => this.emit(queue), wait)
+    })
+  }
+
+  ignore(type = VALUE) {
+    return Stream.extend([this], type, e => null)
+  }
+
+  before(fn, type = VALUE) {
+    return Stream.extend([this], type, e => {
+      let event
+      try {
+        event = new Event(VALUE, fn())
+      } catch(e) {
+        event = new Event(ERROR, e)
+      }
+      return [event, e]
+    })
+  }
+
+  slidingWindow(max, min = 0) {
+    var win = []
+    return Stream.extend([this], type, e => {
+      if(win.push(e.value) > max) win.shift()
+      if(win.length >= min) return new Event(e.type, win)
+    })
+  }
+
+  bufferWhile(fn = v => v) {
+    var buff = []
+    return Stream.extend([this], type, e => {
+      buff.push(e)
+      if(fn(e.value)) return buff
+    })
+  }
 
   combine(that, fn, type = VALUE) {
     let a, b
@@ -246,15 +305,17 @@ class InitializedStream extends Stream {
     this.initializer = initializer
   }
 
-  activate(that, cached) {
+  activate(that) {
     if(!this.last) {
+      let event
       try {
-        this.last = new Event(VALUE, this.initializer())
+        event = new Event(VALUE, this.initializer())
       } catch(e) {
-        this.last = new Event(ERROR, e)
+        event = new Event(ERROR, e)
       }
+      this.execute(event)
     }
-    super.activate(that, cached)
+    super.activate(that)
   }
 }
 
