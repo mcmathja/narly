@@ -49,8 +49,8 @@ class SideEffect {
  */
 
 class Stream {
-  constructor(producers = [], transform = (e, p) => e) {
-    this.transform = transform
+  constructor(producers = [], execute = (e, p) => e) {
+    this.execute = execute
     this.producers = new Set(producers)
     this.consumers = new Set
     this.sideeffects = new Map([[VALUE, new Map], [ERROR, new Map], [END, new Map]])
@@ -75,23 +75,6 @@ class Stream {
     }
   }
 
-  execute(event, producer) {
-    if(event instanceof Array)
-      return event.forEach(e => this.execute(e, producer))
-
-    let result
-    try {
-      result = this.transform(event, producer)
-    } catch(e) {
-      result = new Event(ERROR, e)
-    }
-    
-    if(result instanceof Event)
-      this.emit(result)
-    else if(result instanceof Array)
-      result.forEach(result => this.emit(result))
-  }
-
   emit(result) {
     if(result === DONE) {
       this.ended = true
@@ -100,6 +83,7 @@ class Stream {
     } else this.current = result
 
     this.consumers.forEach(c => c.execute(result, this))
+    return this
   }
 
   // Side effects
@@ -142,67 +126,84 @@ class Stream {
 
   extend(op, type = new Set([VALUE]), producers = []) {
     return new Stream([this].concat(producers), function(e, p) {
-      return type.has(e.type) ? op.call(this, e, p) : e
+      return type.has(e.type) ? op.call(this, e, p) : this.emit(e)
     })
   }
 
   map(fn, type) {
-    return this.extend(e => e.copy(fn(e.value)), type)
+    return this.extend(function(e) {
+      this.emit(e.copy(fn(e.value)))
+    }, type)
   }
 
   filter(fn, type) {
-    return this.extend(e => fn(e.value) ? e : null, type)
+    return this.extend(function(e) {
+      if(fn(e.value)) this.emit(e)
+    }, type)
   }
 
   take(n, type) {
-    return this.extend(e => --n > 0 ? e : [e, DONE], type)
+    return this.extend(function(e) {
+      if(--n > 0) this.emit(e).emit(DONE)
+    }, type)
   }
 
   takeWhile(fn, type) {
-    return this.extend(e => fn(e.value) ? e : DONE, type)
+    return this.extend(function(e) {
+      if(fn(e.value)) this.emit(e)
+      else this.emit(DONE)
+    }, type)
   }
 
   last(type = new Set([VALUE])) {
     var prev = null
-    return this.extend(e => {
-      if(e === DONE) return [prev, DONE]
+    return this.extend(function(e) {
+      if(e === DONE) this.emit(prev).emit(DONE)
       else prev = e
     }, new Set([...type, END]))
   }
 
   skip(n, type) {
-    return this.extend(e => --n < 0 ? e : null, type)
+    return this.extend(function(e) {
+      if(--n < 0) this.emit(e)
+    }, type)
   }
 
   skipWhile(fn, type) {
     var done = false
-    return this.extend(e => done || (done = !fn(e.value)) ? e : null, type)
+    return this.extend(function(e) {
+      if(done || (done = !fn(e.value))) this.emit(e)
+    }, type)
   }
 
   skipDuplicates(fn = (prev, curr) => prev === curr, type) {
     var prev = null
-    return this.extend(e => fn(prev, prev = e.value) ? null : e, type)
+    return this.extend(function(e) {
+      if(!fn(prev, prev = e.value)) this.emit(e)
+    }, type)
   }
 
   diff(fn = (a, b) => [a, b], seed, type) {
     var prev = seed
-    return this.extend(e => {
+    return this.extend(function(e) {
       if(prev !== undefined)
-        return e.copy(fn(prev, prev = e.value))
+        this.emit(e.copy(fn(prev, prev = e.value)))
       else prev = e.value
     }, type)
   }
 
   scan(fn, seed, type) {
     var prev = seed
-    return this.extend(e => {
+    return this.extend(function(e) {
       if(prev !== undefined)
-        return e.copy(prev = fn(prev, e.value))
+        this.emit(e.copy(prev = fn(prev, e.value)))
     }, type)
   }
 
   flatten(fn = v => v, type) {
-    return this.extend(e => e.value.map(v => e.copy(fn(v))), type)
+    return this.extend(function(e) {
+      e.value.forEach(v => this.emit(e.copy(fn(v))))
+    }, type)
   }
 
   delay(wait) {
@@ -233,10 +234,10 @@ class Stream {
     return this.extend(function(e) {
       if(!prev && e === DONE) {
         clearTimeout(timeout)
-        return e
+        this.emit(e)
       } else if(!timeout) {
         timeout = setTimeout(fn.bind(this), wait)
-        return e
+        this.emit(e)
       }
 
       if(e === DONE) done = true
@@ -252,8 +253,8 @@ class Stream {
  */
 
 class Property extends Stream {
-  constructor(producers, transform, initializer) {
-    super(producers, transform)
+  constructor(producers, execute, initializer) {
+    super(producers, execute)
     this.initializer = initializer
   }
 
@@ -314,6 +315,7 @@ class EventSource extends Stream {
     super()
     this.target = target
     this.eventName = eventName
+    this.transform = transform
     this.listening = false
   }
 
@@ -350,13 +352,17 @@ class Narly {
 
   static later(wait, value, type = VALUE) {
     return new CallbackSource(function() {
-      setTimeout(() => this.execute([new Event(type, value), DONE]), wait)  
+      setTimeout(() => {
+        this.emit(new Event(type, value)).emit(DONE)
+      }, wait)
     })
   }
 
   static interval(intv, value, type = VALUE) {
     return new CallbackSource(function() {
-      setInterval(() => this.execute(new Event(type, value)), intv)
+      setInterval(() => {
+        this.emit(new Event(type, value))
+      }, intv)
     })
   }
 
@@ -367,29 +373,32 @@ class Narly {
       var interval = setInterval(() => {
         if(events.length === 1) {
           clearInterval(intv)
-          this.execute([events.shift(), DONE])
-        } else this.execute(events.shift())
+          this.emit(events.shift()).emit(DONE)
+        } else this.emit(events.shift())
       }, intv)      
     })
   }
 
   static fromPoll(interval, fn, type = VALUE) {
     return new CallbackSource(function() {
-      setInterval(() => this.execute(new Event(type, fn())), interval)
+      setInterval(() => this.emit(new Event(type, fn())), interval)
     })
   }
 
   static fromCallback(fn) {
     return new CallbackSource(function() {
-      fn(value => this.execute([new Event(VALUE, value), DONE]))
+      fn(value => {
+        this.emit(new Event(VALUE, value)).emit(DONE)
+      })
     })
   }
 
   static fromNodeCallback(fn) {
     return new CallbackSource(function() {
       fn((error, value) => {
-        if(error) this.execute([new Event(ERROR, error), DONE])
-        else this.execute([new Event(VALUE, value), DONE])
+        if(error) this.emit(new Event(ERROR, error))
+        else this.emit(new Event(VALUE, value))
+        this.emit(DONE)
       })
     })
   }
