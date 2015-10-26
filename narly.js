@@ -97,7 +97,7 @@ class Stream {
       this.ended = true
       this.active = false
       this.producers.forEach(p => p.deactivate(this))
-    } else this.current = result.cached()
+    } else this.current = result
 
     this.consumers.forEach(c => c.execute(result, this))
   }
@@ -128,7 +128,7 @@ class Stream {
     return this
   }
 
-  // Type juggling
+  // Transformations
 
   toProperty(fn) {
     return new Property([this], e => e.current ? null : e, () => {
@@ -140,17 +140,11 @@ class Stream {
     })
   }
 
-  toStream() {
-    return new Stream([this], e => e.current ? null : e)
-  }
-
   extend(op, type = new Set([VALUE]), producers = []) {
-    return new this.constructor([this].concat(producers), function(e, p) {
+    return new Stream([this].concat(producers), function(e, p) {
       return type.has(e.type) ? op.call(this, e, p) : e
     })
   }
-
-  // Transformations
 
   map(fn, type) {
     return this.extend(e => e.copy(fn(e.value)), type)
@@ -210,6 +204,45 @@ class Stream {
   flatten(fn = v => v, type) {
     return this.extend(e => e.value.map(v => e.copy(fn(v))), type)
   }
+
+  delay(wait) {
+    var ops = [], timeout, fn = function() {
+      var op = ops.shift()
+      if(ops.length) {
+        var waitLeft = Math.max(wait - (new Date - ops[0].added), 0)
+        timeout = setTimeout(fn.bind(this), waitLeft)
+      } else timeout = null
+      this.emit(op.event)
+    }
+
+    return this.extend(function(e) {
+      ops.push({ event: e, added: new Date })
+      if(!timeout) timeout = setTimeout(fn.bind(this), wait)
+    }, ANY)
+  }
+
+  throttle(wait) {
+    var timeout, prev, done, fn = function() {
+      if(prev || done) {
+        if(!done) timeout = setTimeout(fn.bind(this), wait)
+        if(prev) this.emit(prev)
+        if(done) this.emit(DONE)
+      } else timeout = null
+    }
+
+    return this.extend(function(e) {
+      if(!prev && e === DONE) {
+        clearTimeout(timeout)
+        return e
+      } else if(!timeout) {
+        timeout = setTimeout(fn.bind(this), wait)
+        return e
+      }
+
+      if(e === DONE) done = true
+      else prev = e
+    }, ANY)
+  }
 }
 
 
@@ -229,9 +262,21 @@ class Property extends Stream {
       this.current = this.initializer()
 
     if(this.current)
-      that.execute(this.current)
+      that.execute(this.current.cached(), this)
 
     super.activate(that)
+  }
+
+  // Transformations
+
+  toStream() {
+    return new Stream([this], e => e.current ? null : e)
+  }
+
+  extend(op, type = new Set([VALUE]), producers = []) {
+    return new Property([this].concat(producers), function(e, p) {
+      return type.has(e.type) ? op.call(this, e, p) : e
+    })
   }
 }
 
