@@ -3,13 +3,18 @@
  */
 
 class Event {
-  constructor(type, value) {
+  constructor(type, value, current = false) {
     this.type = type
     this.value = value
+    this.current = current
   }
 
   copy(value) {
-    return new Event(this.type, value)
+    return new Event(this.type, value, this.current)
+  }
+
+  cached() {
+    return new Event(this.type, this.value, true)
   }
 }
 
@@ -44,12 +49,12 @@ class SideEffect {
  */
 
 class Stream {
-  constructor(transform = ((e, p) => e), producers = []) {
+  constructor(producers = [], transform = (e, p) => e) {
     this.transform = transform
     this.producers = new Set(producers)
     this.consumers = new Set
     this.sideeffects = new Map([[VALUE, new Map], [ERROR, new Map], [END, new Map]])
-    this.ended = this.active = this.last = false
+    this.ended = this.active = this.current = false
   }
 
   activate(that) {
@@ -57,7 +62,7 @@ class Stream {
       this.consumers.add(that)
       if(!this.active) {
         this.active = true
-        this.producers.forEach(p => p.activate(this,))
+        this.producers.forEach(p => p.activate(this))
       }
     } else that.execute(DONE, this)
   }
@@ -66,7 +71,7 @@ class Stream {
     this.consumers.delete(that)
     if(this.consumers.size === 0) {
       this.producers.forEach(p => p.deactivate(this))
-      this.active = false
+      this.active = this.current = false
     }
   }
 
@@ -92,7 +97,7 @@ class Stream {
       this.ended = true
       this.active = false
       this.producers.forEach(p => p.deactivate(this))
-    } else this.last = result
+    } else this.current = result.cached()
 
     this.consumers.forEach(c => c.execute(result, this))
   }
@@ -106,9 +111,7 @@ class Stream {
     if(store.get(fn)) store.get(fn).add(sideEffect)
     else store.set(fn, new Set([sideEffect]))
 
-    if(emitLast && this.last) sideEffect.execute(this.last)
     this.activate(sideEffect)
-
     return this
   }
 
@@ -125,196 +128,109 @@ class Stream {
     return this
   }
 
+  // Type juggling
+
+  toProperty(fn) {
+    return new Property([this], e => e.current ? null : e, () => {
+      try {
+        return new Event(VALUE, fn(), true)
+      } catch(e) {
+        return new Event(ERROR, e, true)
+      }
+    })
+  }
+
+  toStream() {
+    return new Stream([this], e => e.current ? null : e)
+  }
+
+  extend(op, type = new Set([VALUE]), producers = []) {
+    return new this.constructor([this].concat(producers), function(e, p) {
+      return type.has(e.type) ? op.call(this, e, p) : e
+    })
+  }
+
   // Transformations
 
-  static extend(producers, type, op) {
-    let transform
-    if(typeof type === 'number')
-      transform = function(e, p) { e.type === type ? op(e, p) : e }
-    else if(type instanceof Set)
-      transform = function(e, p) { type.has(e.type) ? op(e, p) : e }
-    else
-      transform = function(e, p) { op(e, p) }
-    return new Stream(transform, producers)
+  map(fn, type) {
+    return this.extend(e => e.copy(fn(e.value)), type)
   }
 
-  initialize(fn) {
-    return new InitializedStream(fn, [this])
+  filter(fn, type) {
+    return this.extend(e => fn(e.value) ? e : null, type)
   }
 
-  map(fn, type = VALUE) {
-    return Stream.extend([this], type, e => e.copy(fn(e.value)))
+  take(n, type) {
+    return this.extend(e => --n > 0 ? e : [e, DONE], type)
   }
 
-  filter(fn, type = VALUE) {
-    return Stream.extend([this], type, e => fn(e.value) ? e : null)
+  takeWhile(fn, type) {
+    return this.extend(e => fn(e.value) ? e : DONE, type)
   }
 
-  take(n, type = VALUE) {
-    return Stream.extend([this], type, (e, p) => --n > 0 ? e : [e, DONE])
-  }
-
-  takeWhile(fn, type = VALUE) {
-    return Stream.extend([this], type, e => fn(e.value) ? e : DONE)
-  }
-
-  last(type = VALUE) {
+  last(type = new Set([VALUE])) {
     var prev = null
-    return Stream.extend([this], new Set([type, DONE]),
-      (e, p) => e === DONE ? [prev, DONE] : (prev = e) && null)
+    return this.extend(e => {
+      if(e === DONE) return [prev, DONE]
+      else prev = e
+    }, new Set([...type, END]))
   }
 
-  skip(n, type = VALUE) {
-    return Stream.extend([this], type, e => --n < 0 ? e : null)
+  skip(n, type) {
+    return this.extend(e => --n < 0 ? e : null, type)
   }
 
-  skipWhile(fn, type = VALUE) {
+  skipWhile(fn, type) {
     var done = false
-    return Stream.extend([this], type,
-      e => (done || (done = !fn(e.value))) ? e : null)
+    return this.extend(e => done || (done = !fn(e.value)) ? e : null, type)
   }
 
-  skipDuplicates(fn = (prev, curr) => prev === curr, type = VALUE) {
+  skipDuplicates(fn = (prev, curr) => prev === curr, type) {
     var prev = null
-    return Stream.extend([this], type,
-      e => !prev || !fn(prev.value, e.value) ? prev = e : null)
+    return this.extend(e => fn(prev, prev = e.value) ? null : e, type)
   }
 
-  diff(fn = (a, b) => [a, b], seed = undefined, type = VALUE) {
+  diff(fn = (a, b) => [a, b], seed, type) {
     var prev = seed
-    return Stream.extend([this], type, e => {
+    return this.extend(e => {
       if(prev !== undefined)
-        return new Event(e.type, fn(prev, prev = e.value))
+        return e.copy(fn(prev, prev = e.value))
       else prev = e.value
-    })
+    }, type)
   }
 
-
-  scan(fn, seed = undefined, type = VALUE) {
+  scan(fn, seed, type) {
     var prev = seed
-    return Stream.extend([this], type, e => {
+    return this.extend(e => {
       if(prev !== undefined)
-        return new Event(e.type, prev = fn(prev, e.value))
-    })
+        return e.copy(prev = fn(prev, e.value))
+    }, type)
   }
 
-  flatten(fn = v => v, type = VALUE) {
-    return Stream.extend([this], type, e => {
-      return fn(e.value).map(v => new Event(e.type, v))
-    })
+  flatten(fn = v => v, type) {
+    return this.extend(e => e.value.map(v => e.copy(fn(v))), type)
   }
-
-  delay(wait, type = VALUE) {
-    return Stream.extend([this], type, function(e) {
-      setTimeout(() => { this.emit(e) }, wait)
-    })
-  }
-
-  throttle(wait, type = VALUE) {
-    var timeout, queue = []
-    return Stream.extend([this], type, e => {
-      queue.push(e)
-      if(!timeout) {
-        timeout = setTimeout(() => timeout = null, wait)
-        return queue
-      }
-    })
-  }
-
-  debounce(wait, type = VALUE) {
-    var timeout, queue = []
-    return Stream.extend([this], type, function(e) {
-      queue.push(e)
-      if(timeout) clearTimeout(timeout)
-      timeout = setTimeout(() => this.emit(queue), wait)
-    })
-  }
-
-  ignore(type = VALUE) {
-    return Stream.extend([this], type, e => null)
-  }
-
-  before(fn, type = VALUE) {
-    return Stream.extend([this], type, e => {
-      let event
-      try {
-        event = new Event(VALUE, fn())
-      } catch(e) {
-        event = new Event(ERROR, e)
-      }
-      return [event, e]
-    })
-  }
-
-  slidingWindow(max, min = 0) {
-    var win = []
-    return Stream.extend([this], type, e => {
-      if(win.push(e.value) > max) win.shift()
-      if(win.length >= min) return new Event(e.type, win)
-    })
-  }
-
-  bufferWhile(fn = v => v) {
-    var buff = []
-    return Stream.extend([this], type, e => {
-      buff.push(e)
-      if(fn(e.value)) return buff
-    })
-  }
-
-  combine(that, fn, type = VALUE) {
-    let a, b
-    return Stream.extend([this, that], new Set([type, END]), (e, p) => {
-      if(p === this && e.type === type) a = e
-      if(p === that && e.type === type) b = e
-
-      if(this.ended && that.ended) return DONE
-      else if(a && b) return e.copy(fn(a.value, b.value))
-    })
-  }
-
-  /* -- TO IMPLEMENT --
-
-  zip(){}
-  merge(){}
-  concat(){}
-  flatMap(){}
-  flatMapLatest(){}
-  flatMapFirst(){}
-  flatMapConcat(){}
-  flatMapConcurLimit(){}
-
-  filterBy(){}
-  sampledBy(){}
-  skipUntilBy(){}
-  takeUntilBy(){}
-  bufferBy(){}
-  bufferWhileBy(){}
-  */
 }
 
 
 
 /**
- * An InitializedStream gains a current value on its first activation.
+ * A Property forwards its current value on new activations.
  */
 
-class InitializedStream extends Stream {
-  constructor(initializer, producers) {
-    super(e => e, producers)
+class Property extends Stream {
+  constructor(producers, transform, initializer) {
+    super(producers, transform)
     this.initializer = initializer
   }
 
   activate(that) {
-    if(!this.last) {
-      let event
-      try {
-        event = new Event(VALUE, this.initializer())
-      } catch(e) {
-        event = new Event(ERROR, e)
-      }
-      this.execute(event)
-    }
+    if(!this.current && this.initializer)
+      this.current = this.initializer()
+
+    if(this.current)
+      that.execute(this.current)
+
     super.activate(that)
   }
 }
@@ -325,9 +241,10 @@ class InitializedStream extends Stream {
  * A Source connects a stream or property to a data source.
  */
 
-class ConstantSource extends InitializedStream {
+class ConstantSource extends Property {
   constructor(event) {
-    super(() => [event, DONE])
+    super(undefined, undefined, () => event)
+    this.ended = true
   }
 }
 
@@ -352,25 +269,25 @@ class EventSource extends Stream {
     super()
     this.target = target
     this.eventName = eventName
-    this.active = false
+    this.listening = false
   }
 
   activate(that) {
     super.activate(that)
-    if(!this.active)
+    if(!this.listening) {
       target.on(this.eventName, this.transform)
-    this.active = true
+      this.listening = true
+    }
   }
 
   deactivate(that) {
     super.deactivate(that)
-    if(this.consumers.size === 0) {
+    if(!this.active) {
       target.off(this.eventName)
-      this.active = false
+      this.listening = false
     }
   }
 }
-
 
 
 /**
@@ -392,21 +309,22 @@ class Narly {
     })
   }
 
-  static interval(interval, value, type = VALUE) {
+  static interval(intv, value, type = VALUE) {
     return new CallbackSource(function() {
-      setInterval(() => this.execute(new Event(type, value)), interval)
+      setInterval(() => this.execute(new Event(type, value)), intv)
     })
   }
 
-  static sequentially(interval, values, type = VALUE) {
-    var values = values.slice()
+  static sequentially(intv, values, type = VALUE) {
+    if(!values.length) return Narly.never()
+    var events = values.slice().map(v => new Event(type, v))
     return new CallbackSource(function() {
-      let intv = setInterval(() => {
-        if(!values.length) {
+      var interval = setInterval(() => {
+        if(events.length === 1) {
           clearInterval(intv)
-          this.execute(DONE)
-        } else this.execute(new Event(type, values.shift()))
-      }, interval)      
+          this.execute([events.shift(), DONE])
+        } else this.execute(events.shift())
+      }, intv)      
     })
   }
 
@@ -418,11 +336,7 @@ class Narly {
 
   static fromCallback(fn) {
     return new CallbackSource(function() {
-      try {
-        fn(value => this.execute([new Event(VALUE, value), DONE]))
-      } catch(e) {
-        this.execute([new Event(ERROR, e), DONE])
-      }
+      fn(value => this.execute([new Event(VALUE, value), DONE]))
     })
   }
 
@@ -434,18 +348,4 @@ class Narly {
       })
     })
   }
-
-  /* -- TO IMPLEMENT --
-
-  static fromPromise(promise) {
-    return new CallbackSource(function() {
-      promise.then(
-          value => this.execute([new Event(VALUE, value), DONE]),
-          error => this.execute([new Event(ERROR, value), DONE])
-        ).done()
-    })
-  }
-  static fromEvents(){}
-  static fromESObservable
-  */
 }
