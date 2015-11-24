@@ -19,7 +19,7 @@ class Event {
 }
 
 const VALUE = 0, ERROR = 1, END = 2,
-      ANY = new Set([VALUE, ERROR, END]),
+      ANY = [VALUE, ERROR, END],
       DONE = new Event(END)
 
 
@@ -51,15 +51,15 @@ class SideEffect {
 class Stream {
   constructor(producers = [], execute = (e, p) => e) {
     this.execute = execute
-    this.producers = new Set(producers)
-    this.consumers = new Set
-    this.sideeffects = new Map([[VALUE, new Map], [ERROR, new Map], [END, new Map]])
+    this.producers = producers
+    this.consumers = []
+    this.sideEffects = { [VALUE]: [], [ERROR]: [], [END]: [] }
     this.ended = this.active = this.current = false
   }
 
   activate(that) {
     if(!this.ended) {
-      this.consumers.add(that)
+      this.consumers.push(that)
       if(!this.active) {
         this.active = true
         this.producers.forEach(p => p.activate(this))
@@ -68,7 +68,7 @@ class Stream {
   }
 
   deactivate(that) {
-    this.consumers.delete(that)
+    this.consumers.splice(this.consumers.indexOf(that), 1)
     if(this.consumers.size === 0) {
       this.producers.forEach(p => p.deactivate(this))
       this.active = this.current = false
@@ -89,26 +89,18 @@ class Stream {
   // Side effects
 
   on(type, fn, emitLast) {
-    let sideEffect = new SideEffect(type, fn),
-        store = this.sideeffects.get(type)
-
-    if(store.get(fn)) store.get(fn).add(sideEffect)
-    else store.set(fn, new Set([sideEffect]))
-
+    let sideEffect = new SideEffect(type, fn)
+    this.sideEffects[type].push({ fn: fn, act: sideEffect })
     this.activate(sideEffect)
     return this
   }
 
   off(type, fn) {
-    let store = this.sideeffects.get(type),
-        set = store.get(fn), sideEffect
-
-    if(sideEffect = set && set.values().next().value) {
-      set.delete(sideEffect)
-      if(!set.size) store.delete(fn)
+    let pos = this.sideEffects[type].findIndex(se => se.fn === fn)
+    if(pos > -1) {
+      let sideEffect = this.sideEffects[type].splice(pos, 1).act
       this.deactivate(sideEffect)
     }
-
     return this
   }
 
@@ -124,9 +116,9 @@ class Stream {
     })
   }
 
-  extend(op, type = new Set([VALUE]), producers = []) {
+  extend(op, type = [VALUE], producers = []) {
     return new Stream([this].concat(producers), function(e, p) {
-      return type.has(e.type) ? op.call(this, e, p) : this.emit(e)
+      return type.indexOf(e.type) > -1 ? op.call(this, e, p) : this.emit(e)
     })
   }
 
@@ -155,12 +147,12 @@ class Stream {
     }, type)
   }
 
-  last(type = new Set([VALUE])) {
+  last(type = [VALUE]) {
     var prev = null
     return this.extend(function(e) {
       if(e === DONE) this.emit(prev).emit(DONE)
       else prev = e
-    }, new Set([...type, END]))
+    }, type.concat(END))
   }
 
   skip(n, type) {
@@ -274,9 +266,9 @@ class Property extends Stream {
     return new Stream([this], e => e.current ? null : e)
   }
 
-  extend(op, type = new Set([VALUE]), producers = []) {
+  extend(op, type = [VALUE], producers = []) {
     return new Property([this].concat(producers), function(e, p) {
-      return type.has(e.type) ? op.call(this, e, p) : e
+      return type.indexOf(e.type) > -1 ? op.call(this, e, p) : e
     })
   }
 }
@@ -372,24 +364,22 @@ class Narly {
     return new CallbackSource(function() {
       var interval = setInterval(() => {
         if(events.length === 1) {
-          clearInterval(intv)
+          clearInterval(interval)
           this.emit(events.shift()).emit(DONE)
         } else this.emit(events.shift())
       }, intv)      
     })
   }
 
-  static fromPoll(interval, fn, type = VALUE) {
+  static fromPoll(intv, fn, type = VALUE) {
     return new CallbackSource(function() {
-      setInterval(() => this.emit(new Event(type, fn())), interval)
+      setInterval(() => this.emit(new Event(type, fn())), intv)
     })
   }
 
   static fromCallback(fn) {
     return new CallbackSource(function() {
-      fn(value => {
-        this.emit(new Event(VALUE, value)).emit(DONE)
-      })
+      fn(value => this.emit(new Event(VALUE, value)).emit(DONE))
     })
   }
 
