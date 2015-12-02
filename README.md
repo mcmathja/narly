@@ -15,3 +15,9 @@ npm install
 # Builds project
 gulp build
 ```
+
+To run tests:
+
+```sh
+npm tests
+```
