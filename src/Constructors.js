@@ -4,7 +4,7 @@ import Stream from './Stream'
 import Property from './Property'
 
 /**
- * Provides top-level API.
+ * Provides specialized Stream and Property constructors.
  */
 
 export function constant(data) {

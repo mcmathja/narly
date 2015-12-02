@@ -10,7 +10,7 @@ var rename = require('gulp-rename')
 
 gulp.task('dev', () => {
   return browserify({
-    entries: 'src/Narly.js',
+    entries: 'index.js',
     extensions: '.js',
     standalone: 'Narly'
   })
@@ -20,7 +20,8 @@ gulp.task('dev', () => {
       ['babel-plugin-transform-es2015-modules-umd', {'loose': true}],
       ['babel-plugin-transform-es2015-computed-properties', {'loose': true}],
       ['babel-plugin-transform-es2015-block-scoping', {'loose': true}],
-      ['babel-plugin-transform-es2015-arrow-functions']
+      ['babel-plugin-transform-es2015-arrow-functions'],
+      ['transform-object-assign']
     ]
   }))
   .bundle()
