@@ -1,5 +1,6 @@
 'use strict'
 
+import {VAL, ERR} from './Constants'
 import Stream from './Stream'
 import Property from './Property'
 
@@ -7,8 +8,20 @@ import Property from './Property'
  * Provides specialized Stream and Property constructors.
  */
 
-export function constant(data) {
-  return new Property(undefined, undefined, () => data).end()
+export function value(data) {
+  let P = new Property
+  P.current.type = VAL
+  P.current.data = data
+  P.ended = true
+  return P
+}
+
+export function error(data) {
+  let P = new Property
+  P.current.type = ERR
+  P.current.data = data
+  P.ended = true
+  return P
 }
 
 export function never() {
@@ -54,7 +67,7 @@ export function fromCallback(fn) {
 export function fromNodeCallback(fn) {
   let S = new Stream
   fn((e, v) => {
-    if(error) S.err(e).end()
+    if(e) S.err(e).end()
     else S.val(v).end()
   })
   return S
