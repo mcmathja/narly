@@ -137,7 +137,7 @@ export default class Observable {
       },
       end: function(p) {
         if(curr !== undefined)
-          this.emitVal(data, current).emitEnd()
+          this.emitVal(data, curr).emitEnd()
       }
     })
   }
