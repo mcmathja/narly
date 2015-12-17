@@ -1,6 +1,6 @@
 'use strict'
 
-import {VAL, ERR, END} from './Constants'
+import {VAL, ERR, END, ANY} from './Constants'
 import * as SideEffects from './SideEffects'
 
 /**
