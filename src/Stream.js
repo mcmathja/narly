@@ -7,7 +7,7 @@ import Observable from './Observable'
  */
 
 export default class Stream extends Observable {
-  extend(transforms, producers) {
-    return new Stream(transforms, [this].concat(producers || []))
+  extend(transformers, producers) {
+    return new Stream(transformers, [this].concat(producers || []))
   }
 }

@@ -8,8 +8,8 @@ import Observable from './Observable'
  */
 
 export default class Property extends Observable {
-  constructor(transforms, producers, initializer) {
-    super(transforms, producers)
+  constructor(transformers, producers, initializer) {
+    super(transformers, producers)
     this.initializer = initializer
     this.current = { type: undefined, data: undefined }
   }
@@ -40,7 +40,7 @@ export default class Property extends Observable {
     super.emitErr(d, c)
   }
 
-  extend(transforms, producers) {
-    return new Property(transforms, [this].concat(producers || []))
+  extend(transformers, producers) {
+    return new Property(transformers, [this].concat(producers || []))
   }
 }
