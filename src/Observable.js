@@ -145,7 +145,7 @@ export default class Observable {
   skip(n) {
     return this.extend({
       val: function(d, p, c) {
-        if(--n <= 0) this.emitVal(d, c)
+        if(--n > 0) this.emitVal(d, c)
       }
     })
   }
