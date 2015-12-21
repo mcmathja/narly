@@ -83,7 +83,7 @@ export default class Observable {
   }
 
   off(type, fn) {
-    let idx = this.sideEffects[type].findIndex(c => c.fn === fn)
+    let idx = this.sideEffects[type].map(c => c.fn).indexOf(fn)
 
     if(idx > -1) {
       let se = this.sideEffects[type].splice(idx, 1)

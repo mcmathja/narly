@@ -8,7 +8,7 @@ var buffer = require('vinyl-buffer')
 var uglify = require('gulp-uglify')
 var rename = require('gulp-rename')
 
-gulp.task('dev', () => {
+gulp.task('dev', function() {
   return browserify({
     entries: 'index.js',
     extensions: '.js',
@@ -29,7 +29,7 @@ gulp.task('dev', () => {
   .pipe(gulp.dest('dist/'))
 })
 
-gulp.task('prod', ['dev'], () => {
+gulp.task('prod', ['dev'], function() {
   gulp.src('dist/narly.js')
   .pipe(uglify())
   .pipe(rename({ extname: '.min.js' }))

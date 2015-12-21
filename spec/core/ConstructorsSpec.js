@@ -227,7 +227,7 @@ describe('Constructors:', function() {
     })
 
     it('should attach a handler to the event emitter when activated', function() {
-      S.onAny(() => {})
+      S.onAny(function() {})
       expect(ee.listeners[name].length).toBe(1)
     })
 
