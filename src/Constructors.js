@@ -1,83 +1,66 @@
 'use strict'
 
 import {VAL, ERR} from './Constants'
-import Stream from './Stream'
-import Property from './Property'
+import * as Sources from './Sources'
 
 /**
  * Provides specialized Stream and Property constructors.
  */
 
 export function value(data) {
-  let P = new Property
-  P.current.type = VAL
-  P.current.data = data
-  P.ended = true
-  return P
+  return new Sources.Constant(VAL, data)
 }
 
 export function error(data) {
-  let P = new Property
-  P.current.type = ERR
-  P.current.data = data
-  P.ended = true
-  return P
+  return new Sources.Constant(ERR, data)
 }
 
 export function never() {
-  return (new Stream).end()
+  return new Sources.Constant
 }
 
-export function later(wait, data) {
-  let S = new Stream
-  setTimeout(() => { S.val(data).end() }, wait)
-  return S
+export function later(delay, data) {
+  return new Sources.Callback(function() {
+    setTimeout(() => this.val(data).end(), delay)
+  })
 }
 
-export function interval(intv, data) {
-  let S = new Stream
-  setInterval(() => { S.val(data) }, intv)
-  return S
+export function interval(delay, data) {
+  return new Sources.Timed(function() {
+    this.val(data)
+  }, delay)
 }
 
-export function sequentially(intv, data) {
-  if(!data.length) return Narly.never()
-  let events = data.slice(), S = new Stream
-  var interval = setInterval(() => {
-    if(events.length === 1) {
-      clearInterval(interval)
-      S.val(events.shift()).end()
-    } else S.val(events.shift())
-  }, intv)
-  return S
+export function poll(delay, fn) {
+  return new Sources.Timed(function() {
+    this.val(fn())
+  }, delay)
 }
 
-export function fromPoll(intv, fn) {
-  let S = new Stream
-  setInterval(() => S.val(fn()), intv)
-  return S
+export function sequentially(delay, data) {
+  if(!(data = data.slice()).length) return never()
+  else return new Sources.Timed(function() {
+    this.val(data.shift())
+    if(data.length === 0)
+      this.end()
+  }, delay)
 }
 
 export function fromCallback(fn) {
-  let S = new Stream
-  fn(data => S.val(data).end())
-  return S
+  return new Sources.Callback(function() {
+    fn(data => this.val(data).end())
+  })
 }
 
 export function fromNodeCallback(fn) {
-  let S = new Stream
-  fn((e, v) => {
-    if(e) S.err(e).end()
-    else S.val(v).end()
+  return new Sources.Callback(function() {
+    fn((e, v) => {
+      if(e) this.err(e).end()
+      else this.val(v).end()
+    })
   })
-  return S
 }
 
 export function fromEvents(target, name) {
-  let S = new Stream
-  if(target.addEventListener)
-    target.addEventListener(name, e => S.val(e))
-  else if(target.on)
-    target.on(name, e => S.val(e))
-  return S
+  return new Sources.Events(target, name)
 }

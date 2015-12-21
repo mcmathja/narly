@@ -1,6 +1,6 @@
 var Narly = require("../../dist/narly")
 
-describe('Constructors', function() {
+describe('Constructors:', function() {
   describe('value', function() {
     var data = 1, P = Narly.value(data)
 
@@ -109,10 +109,10 @@ describe('Constructors', function() {
     })
   })
 
-  describe('fromPoll', function() {
+  describe('poll', function() {
     var S, intv = 300, n = 0, fn = function() { return n * 2 }
 
-    beforeEach(function() { S = Narly.fromPoll(intv, fn) })
+    beforeEach(function() { S = Narly.poll(intv, fn) })
 
     it('should create an in progress stream', function() {
       expect(S instanceof Narly.Stream)
@@ -202,6 +202,12 @@ describe('Constructors', function() {
         this.listeners[name] = [fn]
     }
 
+    eeStub.prototype.off = function(name, fn) {
+      this.listeners[name].splice(this.listeners[name].indexOf(fn), 1)
+      if(this.listeners[name].length === 0)
+        delete this.listeners[name]
+    }
+
     eeStub.prototype.emit = function(name, event) {
       if(this.listeners[name])
         this.listeners[name].forEach(function(fn) { fn(event) })
@@ -220,7 +226,8 @@ describe('Constructors', function() {
       expect(S.ended).toBe(false)
     })
 
-    it('should attach a handler to the event emitter', function() {
+    it('should attach a handler to the event emitter when activated', function() {
+      S.onAny(() => {})
       expect(ee.listeners[name].length).toBe(1)
     })
 
